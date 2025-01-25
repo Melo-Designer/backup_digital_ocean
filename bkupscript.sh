@@ -1,6 +1,16 @@
 #!/bin/bash
 
-#DATETIME=`date +%y%m%d-%H_%M_%S`
+# Configuração da webhook do Discord
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/SEU_WEBHOOK_AQUI"
+
+# Função para enviar mensagens para o Discord
+discord_notify() {
+    local message=$1
+    curl -H "Content-Type: application/json" \
+         -X POST \
+         -d "{\"content\": \"$message\"}" $DISCORD_WEBHOOK_URL
+}
+
 DATETIME=`date +%y%m%d`
 DATETIME_OLD=`date -d "15 days ago" +%y%m%d`
 SRC=$1 #source 
@@ -11,96 +21,105 @@ MYSQL_PASSWORD="_password"
 DATABASE_NAME="_db_name"
 
 showhelp(){
-        echo "\n\n############################################"
-        echo "# bkupscript.sh                            #"
-        echo "############################################"
-        echo "\nThis script will backup files/folders into a single compressed file and will store it in the current folder."
-        echo "In order to work, this script needs the following three parameters in the listed order: "
-        echo "\t- The full path for the folder or file you want to backup."
-        echo "\t- The name of the Space where you want to store the backup at (not the url, just the name)."
-        echo "\t- The name for the backup file (timestamp will be added to the beginning of the filename)\n"
-        echo "Example: sh bkupscript.sh ./testdir testSpace backupdata\n"
+    echo "\n\n############################################"
+    echo "# bkupscript.sh                            #"
+    echo "############################################"
+    echo "\nEste script fará backup de arquivos/pastas em um único arquivo compactado e armazenará na pasta atual."
+    echo "Para funcionar, este script precisa dos seguintes três parâmetros na ordem listada: "
+    echo "\t- O caminho completo para a pasta ou arquivo que você deseja fazer backup."
+    echo "\t- O nome do Space onde deseja armazenar o backup (apenas o nome, não a URL)."
+    echo "\t- O nome para o arquivo de backup (o timestamp será adicionado ao início do nome do arquivo)\n"
+    echo "Exemplo: sh bkupscript.sh ./testdir testSpace backupdata\n"
 }
+
 tarandzip(){
-    echo "\n##### Gathering files #####\n"
+    echo "\n##### Coletando arquivos #####\n"
     if tar -czvf $GIVENNAME-$DATETIME.tar.gz $SRC; then
-        echo "\n##### Done gathering files #####\n"
+        echo "\n##### Arquivos coletados com sucesso #####\n"
+        discord_notify "Backup criado com sucesso: $GIVENNAME-$DATETIME.tar.gz"
         return 0
     else
-        echo "\n##### Failed to gather files #####\n"
-        return 1
-    fi
-}
-movetoSpace(){
-    echo "\n##### MOVING TO SPACE #####\n"
-    if s3cmd put $GIVENNAME-$DATETIME.tar.gz s3://$DST; then
-        echo "\n##### Done moving files to s3://"$DST" #####\n"
-	    rm -rf ~/$GIVENNAME-$DATETIME.tar.gz
-        ~/backup_digital_ocean/slack.sh '#channel1' "\n##### Arquivos enviados para s3://"$DST" #####\n"
-        return 0
-    else
-        echo "\n##### Failed to move files to the Space #####\n"
-        ~/backup_digital_ocean/slack.sh '#channel1'  "\n##### Falhou ao enviar os arquivos para o space"
-        return 1
-    fi
-}
-movetoSpaceDB(){
-    echo "\n##### MOVING TO DATABASE SPACE #####\n"
-    if s3cmd put $DATABASE_NAME-$GIVENNAME-$DATETIME.sql s3://$DST; then
-        echo "\n##### Done moving files dbs to s3://"$DST" #####\n"
-        ~/backup_digital_ocean/slack.sh '#channel1' "\n##### Banco de dados enviado para s3://"$DST" #####\n"
-        rm -rf ~/$DATABASE_NAME-$GIVENNAME-$DATETIME.sql
-        return 0
-    else
-        echo "\n##### Failed to move files dbs to the Space #####\n"
-        ~/backup_digital_ocean/slack.sh '#channel1'  "\n##### Falhou ao enviar banco de dados para o space"
+        echo "\n##### Falha ao coletar arquivos #####\n"
+        discord_notify "Falha ao criar backup: $GIVENNAME-$DATETIME.tar.gz"
         return 1
     fi
 }
 
+movetoSpace(){
+    echo "\n##### MOVENDO PARA O SPACE #####\n"
+    if s3cmd put $GIVENNAME-$DATETIME.tar.gz s3://$DST; then
+        echo "\n##### Arquivos enviados com sucesso para s3://$DST #####\n"
+        discord_notify "Backup enviado com sucesso para s3://$DST"
+        rm -rf ~/$GIVENNAME-$DATETIME.tar.gz
+        return 0
+    else
+        echo "\n##### Falha ao enviar arquivos para o Space #####\n"
+        discord_notify "Falha ao enviar backup para s3://$DST"
+        return 1
+    fi
+}
 
 dumpDatabases(){
-    echo "\n##### DUMP ALL DATABASES #####\n"
-    mysqldump -u $DATABASE_NAME -p$MYSQL_PASSWORD $DATABASE_NAME > $DATABASE_NAME-$GIVENNAME-$DATETIME.sql
+    echo "\n##### EXPORTANDO TODOS OS BANCOS DE DADOS #####\n"
+    mysqldump -u $MYSQL_USER -p$MYSQL_PASSWORD $DATABASE_NAME > $DATABASE_NAME-$GIVENNAME-$DATETIME.sql
+    discord_notify "Banco de dados exportado: $DATABASE_NAME-$GIVENNAME-$DATETIME.sql"
     return 0
 }
 
-removeOldBackupDB(){
-     echo "\n##### REMOVE OLD BACKUP DBS SPACE #####\n"
-    if s3cmd rm s3://$DST$DATABASE_NAME-$GIVENNAME-$DATETIME_OLD.sql; then
-        echo "\n##### Done remove files dbs to s3://"$DST" #####\n"
-        #rm -rf ~/$DATABASE_NAME-$GIVENNAME-$DATETIME.sql
+movetoSpaceDB(){
+    echo "\n##### MOVENDO BANCO DE DADOS PARA O SPACE #####\n"
+    if s3cmd put $DATABASE_NAME-$GIVENNAME-$DATETIME.sql s3://$DST; then
+        echo "\n##### Banco de dados enviado com sucesso para s3://$DST #####\n"
+        discord_notify "Banco de dados enviado com sucesso para s3://$DST"
+        rm -rf ~/$DATABASE_NAME-$GIVENNAME-$DATETIME.sql
         return 0
     else
-        echo "\n##### Failed remove files dbs Space #####\n"
+        echo "\n##### Falha ao enviar banco de dados para o Space #####\n"
+        discord_notify "Falha ao enviar banco de dados para s3://$DST"
+        return 1
+    fi
+}
+
+removeOldBackupDB(){
+    echo "\n##### REMOVENDO BACKUP ANTIGO DO BANCO DE DADOS #####\n"
+    if s3cmd rm s3://$DST$DATABASE_NAME-$GIVENNAME-$DATETIME_OLD.sql; then
+        echo "\n##### Backup antigo do banco de dados removido de s3://$DST #####\n"
+        discord_notify "Backup antigo do banco de dados removido de s3://$DST"
+        return 0
+    else
+        echo "\n##### Falha ao remover backup antigo do banco de dados #####\n"
+        discord_notify "Falha ao remover backup antigo do banco de dados em s3://$DST"
         return 1
     fi
 }
 
 removeOldBackupFile(){
-     echo "\n##### REMOVE OLD BACKUP SPACE #####\n"
+    echo "\n##### REMOVENDO BACKUP ANTIGO #####\n"
     if s3cmd rm s3://$DST$GIVENNAME-$DATETIME_OLD.tar.gz; then
-        echo "\n##### Done remove files file to s3://"$DST" #####\n"
-        #rm -rf ~/$DATABASE_NAME-$GIVENNAME-$DATETIME.sql
+        echo "\n##### Backup antigo removido de s3://$DST #####\n"
+        discord_notify "Backup antigo removido de s3://$DST"
         return 0
     else
-        echo "\n##### Failed remove files file Space #####\n"
+        echo "\n##### Falha ao remover backup antigo #####\n"
+        discord_notify "Falha ao remover backup antigo de s3://$DST"
         return 1
     fi
 }
-#echo "$DATETIME";
-#echo "$DATETIME_OLD";
+
 if [ ! -z "$GIVENNAME" ]; then
     if tarandzip; then
         movetoSpace
-	if dumpDatabases; then
-	    movetoSpaceDB
-	fi
-    removeOldBackupDB
-    removeOldBackupFile
+        if dumpDatabases; then
+            movetoSpaceDB
+        fi
+        removeOldBackupDB
+        removeOldBackupFile
+        discord_notify "Processo de backup concluído com sucesso."
     else
         showhelp
+        discord_notify "Processo de backup falhou."
     fi
 else
     showhelp
+    discord_notify "Execução falhou: Parâmetros insuficientes."
 fi
